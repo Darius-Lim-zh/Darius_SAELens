@@ -201,6 +201,7 @@ class LanguageModelSAETrainingRunner:
             trainer: The SAE trainer that contains the loss history
         """
         try:
+            saved_files = []  # Ensure this is always defined
             # Get loss history from trainer
             loss_history = trainer.get_loss_history()
             
@@ -262,8 +263,11 @@ class LanguageModelSAETrainingRunner:
                 print(f"  {loss_name}: {loss_stats['final']:.6f}")
                 
         except Exception as e:
-            logger.warning(f"Failed to generate loss graphs: {e}")
-            # Don't raise the exception to avoid interrupting the training completion
+            if 'saved_files' in locals() and saved_files:
+                logger.warning(f"An error occurred during loss graph generation, but some graphs were created: {e}")
+                print("Note: If you see all expected graphs, this error can be ignored. It may be due to a skipped loss with mismatched length.")
+            else:
+                logger.warning(f"Failed to generate any loss graphs: {e}")
 
     def _set_sae_metadata(self):
         self.sae.cfg.metadata.dataset_path = self.cfg.dataset_path
