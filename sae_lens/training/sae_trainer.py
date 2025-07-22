@@ -100,53 +100,90 @@ class SAETrainer(Generic[T_TRAINING_SAE, T_TRAINING_SAE_CONFIG]):
             sae.cfg.d_sae, device=cfg.device
         )
         self.n_frac_active_samples = 0
-        # we don't train the scaling factor (initially)
-        # set requires grad to false for the scaling factor
-        for name, param in self.sae.named_parameters():
-            if "scaling_factor" in name:
-                param.requires_grad = False
 
+        # Loss tracking for graphing
+        self.loss_history = {
+            "steps": [],
+            "overall_loss": [],
+            "mse_loss": [],
+            "l1_loss": [],
+            "auxiliary_reconstruction_loss": [],
+        }
+        self.loss_tracking_enabled = True
+
+        # Initialize optimizers and schedulers
         self.optimizer = Adam(
             sae.parameters(),
             lr=cfg.lr,
-            betas=(
-                cfg.adam_beta1,
-                cfg.adam_beta2,
-            ),
+            betas=(cfg.adam_beta1, cfg.adam_beta2),
         )
-        assert cfg.lr_end is not None  # this is set in config post-init
+        # Ensure lr_end is not None
+        lr_end = cfg.lr_end if cfg.lr_end is not None else cfg.lr / 10
         self.lr_scheduler = get_lr_scheduler(
-            cfg.lr_scheduler_name,
-            lr=cfg.lr,
+            scheduler_name=cfg.lr_scheduler_name,
             optimizer=self.optimizer,
+            training_steps=self.cfg.total_training_steps,
+            lr=cfg.lr,
             warm_up_steps=cfg.lr_warm_up_steps,
             decay_steps=cfg.lr_decay_steps,
-            training_steps=self.cfg.total_training_steps,
-            lr_end=cfg.lr_end,
+            lr_end=lr_end,
             num_cycles=cfg.n_restart_cycles,
         )
+
+        # Initialize coefficient schedulers
         self.coefficient_schedulers = {}
-        for name, coeff_cfg in self.sae.get_coefficients().items():
-            if not isinstance(coeff_cfg, TrainCoefficientConfig):
-                coeff_cfg = TrainCoefficientConfig(value=coeff_cfg, warm_up_steps=0)
-            self.coefficient_schedulers[name] = CoefficientScheduler(
-                warm_up_steps=coeff_cfg.warm_up_steps,
-                final_value=coeff_cfg.value,
-            )
+        for name, coefficient_config in sae.get_coefficients().items():
+            if isinstance(coefficient_config, TrainCoefficientConfig):
+                self.coefficient_schedulers[name] = CoefficientScheduler(
+                    coefficient_config.value,
+                    coefficient_config.warm_up_steps,
+                )
+            else:
+                self.coefficient_schedulers[name] = CoefficientScheduler(
+                    coefficient_config, 0
+                )
 
-        # Setup autocast if using
-        self.grad_scaler = torch.amp.GradScaler(
-            device=self.cfg.device, enabled=self.cfg.autocast
+        # Initialize autocast and grad scaler
+        self.autocast_if_enabled = torch.autocast(
+            device_type="cuda", dtype=torch.float16, enabled=cfg.autocast
         )
+        self.grad_scaler = torch.cuda.amp.GradScaler(enabled=cfg.autocast)
 
-        if self.cfg.autocast:
-            self.autocast_if_enabled = torch.autocast(
-                device_type=self.cfg.device,
-                dtype=torch.bfloat16,
-                enabled=self.cfg.autocast,
-            )
-        else:
-            self.autocast_if_enabled = contextlib.nullcontext()
+    def _track_loss(self, step_output: TrainStepOutput) -> None:
+        """Track loss values for graphing."""
+        if not self.loss_tracking_enabled:
+            return
+            
+        self.loss_history["steps"].append(self.n_training_steps)
+        self.loss_history["overall_loss"].append(step_output.loss.item())
+        
+        # Track individual losses
+        for loss_name, loss_value in step_output.losses.items():
+            if loss_name not in self.loss_history:
+                self.loss_history[loss_name] = []
+            self.loss_history[loss_name].append(_unwrap_item(loss_value))
+
+    def get_loss_history(self) -> dict[str, list[float]]:
+        """Get the loss history for graphing."""
+        return self.loss_history.copy()
+
+    def clear_loss_history(self) -> None:
+        """Clear the loss history."""
+        self.loss_history = {
+            "steps": [],
+            "overall_loss": [],
+            "mse_loss": [],
+            "l1_loss": [],
+            "auxiliary_reconstruction_loss": [],
+        }
+
+    def disable_loss_tracking(self) -> None:
+        """Disable loss tracking to save memory."""
+        self.loss_tracking_enabled = False
+
+    def enable_loss_tracking(self) -> None:
+        """Enable loss tracking."""
+        self.loss_tracking_enabled = True
 
     @property
     def feature_sparsity(self) -> torch.Tensor:
@@ -289,6 +326,9 @@ class SAETrainer(Generic[T_TRAINING_SAE, T_TRAINING_SAE_CONFIG]):
         self.lr_scheduler.step()
         for scheduler in self.coefficient_schedulers.values():
             scheduler.step()
+
+        # Track loss for graphing
+        self._track_loss(train_step_output)
 
         return train_step_output
 

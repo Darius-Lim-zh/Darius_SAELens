@@ -100,8 +100,27 @@ reportPrivateImportUsage = "none"
 ignore = ["**/wandb/**"]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sae-lens"
+version = "0.1.0"
+description = "Sparse Autoencoder Lens"
+authors = [{name = "Your Name", email = "your@email.com"}]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "torch",
+    "matplotlib",
+    "seaborn",
+    "numpy",
+    "pandas"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sae_lens*"]
 
 [tool.semantic_release]
 version_variables = ["sae_lens/__init__.py:__version__"]

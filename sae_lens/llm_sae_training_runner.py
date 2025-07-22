@@ -29,6 +29,7 @@ from sae_lens.saes.standard_sae import StandardTrainingSAEConfig
 from sae_lens.saes.topk_sae import TopKTrainingSAEConfig
 from sae_lens.training.activation_scaler import ActivationScaler
 from sae_lens.training.activations_store import ActivationsStore
+from sae_lens.training.loss_graphing import LossGraphGenerator
 from sae_lens.training.sae_trainer import SAETrainer
 from sae_lens.training.types import DataProvider
 
@@ -184,10 +185,80 @@ class LanguageModelSAETrainingRunner:
         self._compile_if_needed()
         sae = self.run_trainer_with_interruption_handling(trainer)
 
+        # Generate loss graphs after training
+        self._generate_loss_graphs(trainer)
+
         if self.cfg.logger.log_to_wandb:
             wandb.finish()
 
         return sae
+
+    def _generate_loss_graphs(self, trainer: SAETrainer[TrainingSAE[TrainingSAEConfig], TrainingSAEConfig]) -> None:
+        """
+        Generate and save loss graphs after training completion.
+        
+        Args:
+            trainer: The SAE trainer that contains the loss history
+        """
+        try:
+            # Get loss history from trainer
+            loss_history = trainer.get_loss_history()
+            
+            if not loss_history or "steps" not in loss_history or not loss_history["steps"]:
+                logger.info("No loss history available for graphing")
+                return
+                
+            # Initialize loss graph generator
+            graph_generator = LossGraphGenerator(output_dir="loss_graphs")
+            
+            # Generate timestamp for file naming
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Generate loss graphs
+            saved_files = graph_generator.generate_loss_graphs(
+                loss_history=loss_history,
+                model_name=self.cfg.model_name,
+                hook_name=self.cfg.hook_name,
+                timestamp=timestamp,
+            )
+            
+            # Generate summary statistics
+            stats = graph_generator.generate_summary_stats(
+                loss_history=loss_history,
+                model_name=self.cfg.model_name,
+                hook_name=self.cfg.hook_name,
+            )
+            
+            # Save loss history to CSV
+            csv_file = graph_generator.save_loss_history_csv(
+                loss_history=loss_history,
+                model_name=self.cfg.model_name,
+                hook_name=self.cfg.hook_name,
+                timestamp=timestamp,
+            )
+            
+            # Log results
+            logger.info(f"Generated {len(saved_files)} loss graph files:")
+            for file_path in saved_files:
+                logger.info(f"  - {file_path}")
+            logger.info(f"Saved loss history CSV to: {csv_file}")
+            
+            # Print summary statistics
+            logger.info("Loss Training Summary:")
+            logger.info(f"  Model: {stats['model_name']}")
+            logger.info(f"  Hook: {stats['hook_name']}")
+            logger.info(f"  Total Steps: {stats['total_steps']}")
+            
+            for loss_name, loss_stats in stats['losses'].items():
+                logger.info(f"  {loss_name}:")
+                logger.info(f"    Final: {loss_stats['final']:.6f}")
+                logger.info(f"    Mean: {loss_stats['mean']:.6f}")
+                logger.info(f"    Change: {loss_stats['change']:.6f} ({loss_stats['percent_change']:.2f}%)")
+                
+        except Exception as e:
+            logger.warning(f"Failed to generate loss graphs: {e}")
+            # Don't raise the exception to avoid interrupting the training completion
 
     def _set_sae_metadata(self):
         self.sae.cfg.metadata.dataset_path = self.cfg.dataset_path
