@@ -256,6 +256,11 @@ class LanguageModelSAETrainingRunner:
                 logger.info(f"    Mean: {loss_stats['mean']:.6f}")
                 logger.info(f"    Change: {loss_stats['change']:.6f} ({loss_stats['percent_change']:.2f}%)")
                 
+            # Print final loss values to the console
+            print("\nFinal Loss Results:")
+            for loss_name, loss_stats in stats['losses'].items():
+                print(f"  {loss_name}: {loss_stats['final']:.6f}")
+                
         except Exception as e:
             logger.warning(f"Failed to generate loss graphs: {e}")
             # Don't raise the exception to avoid interrupting the training completion

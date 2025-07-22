@@ -37,15 +37,7 @@ class LossGraphGenerator:
     ) -> List[str]:
         """
         Generate and save loss graphs from training history.
-        
-        Args:
-            loss_history: Dictionary containing loss history with keys like 'steps', 'mse_loss', 'l1_loss', etc.
-            model_name: Name of the model for file naming
-            hook_name: Name of the hook for file naming
-            timestamp: Optional timestamp for file naming
-            
-        Returns:
-            List of saved file paths
+        Returns a list of saved file paths. Skips any loss arrays that do not match the length of steps.
         """
         if not loss_history or "steps" not in loss_history:
             print("No loss history provided or missing steps data")
@@ -54,24 +46,23 @@ class LossGraphGenerator:
         if timestamp is None:
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             
-        # Clean up model and hook names for file naming
         model_name_clean = model_name.replace("/", "_").replace(" ", "_")
         hook_name_clean = hook_name.replace("/", "_").replace(" ", "_")
         
         saved_files = []
+        skipped_losses = []
+        steps_len = len(loss_history["steps"])
         
         # Generate individual loss graphs
         for loss_name, loss_values in loss_history.items():
             if loss_name == "steps" or not loss_values:
                 continue
-                
-            if len(loss_values) != len(loss_history["steps"]):
-                print(f"Warning: Loss {loss_name} has different length than steps, skipping")
+            if len(loss_values) != steps_len:
+                print(f"Skipping {loss_name} (length {len(loss_values)}) due to length mismatch with steps ({steps_len})")
+                skipped_losses.append(loss_name)
                 continue
-                
             filename = f"loss_curves_{loss_name}_{model_name_clean}_{hook_name_clean}_{timestamp}.png"
             filepath = self.output_dir / filename
-            
             self._plot_single_loss(
                 steps=loss_history["steps"],
                 loss_values=loss_values,
@@ -81,19 +72,19 @@ class LossGraphGenerator:
                 hook_name=hook_name,
             )
             saved_files.append(str(filepath))
-            
-        # Generate combined loss graph
+        # Generate combined loss graph (only for valid losses)
         combined_filename = f"loss_curves_combined_{model_name_clean}_{hook_name_clean}_{timestamp}.png"
         combined_filepath = self.output_dir / combined_filename
-        
+        valid_loss_history = {k: v for k, v in loss_history.items() if k == "steps" or (k not in skipped_losses and len(v) == steps_len)}
         self._plot_combined_losses(
-            loss_history=loss_history,
+            loss_history=valid_loss_history,
             filepath=combined_filepath,
             model_name=model_name,
             hook_name=hook_name,
         )
         saved_files.append(str(combined_filepath))
-        
+        if skipped_losses:
+            print(f"Skipped plotting for losses due to length mismatch: {', '.join(skipped_losses)}")
         return saved_files
 
     def _plot_single_loss(
